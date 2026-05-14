@@ -30,4 +30,6 @@ build/
 
 # Temporales
 *.tmp
-*.swpautores.txt
+*.swp
+
+autores.txt
