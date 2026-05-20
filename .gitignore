@@ -33,3 +33,7 @@ build/
 *.swp
 
 autores.txt
+
+pubsub.txt
+
+cat.sh
