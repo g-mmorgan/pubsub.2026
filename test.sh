@@ -1,5 +1,9 @@
 #!/bin/sh
 
+# script de test automatico para la practica pubsub
+# arranca registry + broker, compila TestAutoGrp y ejecuta los tests
+# uso: ./test.sh [puerto]   (por defecto 54321)
+
 set -u
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -9,13 +13,14 @@ TMP_DIR="$(mktemp -d /tmp/pubsub-test.XXXXXX)"
 REGISTRY_PID=""
 BROKER_PID=""
 
+# limpieza al salir por cualquier motivo (exit normal, ctrl-c, señal)
 cleanup() {
     echo
-    echo "== Limpieza final =="
+    echo "== limpieza final =="
 
     if [ -n "${BROKER_PID}" ]; then
         if kill -0 "${BROKER_PID}" 2>/dev/null; then
-            echo "Parando broker..."
+            echo "parando broker (PID ${BROKER_PID})..."
             kill "${BROKER_PID}" 2>/dev/null || true
             wait "${BROKER_PID}" 2>/dev/null || true
         fi
@@ -23,163 +28,161 @@ cleanup() {
 
     if [ -n "${REGISTRY_PID}" ]; then
         if kill -0 "${REGISTRY_PID}" 2>/dev/null; then
-            echo "Parando rmiregistry..."
+            echo "parando rmiregistry (PID ${REGISTRY_PID})..."
             kill "${REGISTRY_PID}" 2>/dev/null || true
             wait "${REGISTRY_PID}" 2>/dev/null || true
         fi
     fi
 
-    echo "Borrando temporales: ${TMP_DIR}"
+    echo "borrando temporales: ${TMP_DIR}"
     rm -rf "${TMP_DIR}"
 }
 
 trap cleanup EXIT INT TERM
 
-echo "== Test automático PubSub =="
-echo "Directorio raíz: ${ROOT_DIR}"
-echo "Puerto RMI:      ${PORT}"
+echo "== test automatico pubsub =="
+echo "directorio raiz: ${ROOT_DIR}"
+echo "puerto RMI:      ${PORT}"
 echo
 
-echo "== Comprobando ficheros necesarios =="
+# ---------------------------------------------------------------
+# comprobacion de ficheros y permisos necesarios antes de empezar
+# ---------------------------------------------------------------
+echo "== comprobando ficheros necesarios =="
 
-# TestAutoGrp.java puede estar en la raíz o ya en su destino final
-TESTAUTO_SRC="${ROOT_DIR}/client_node/src/pubsubapps/TestAuto.java"
-TESTAUTO_ROOT="${ROOT_DIR}/TestAuto.java"
+# el fichero java del test debe estar en su ubicacion final dentro del proyecto
+TESTAUTO_SRC="${ROOT_DIR}/client_node/src/pubsubapps/TestAutoGrp.java"
+TESTAUTO_ROOT="${ROOT_DIR}/TestAutoGrp.java"
 
 if [ ! -f "${TESTAUTO_SRC}" ]; then
+    # si esta en la raiz del proyecto, lo copiamos al lugar correcto
     if [ -f "${TESTAUTO_ROOT}" ]; then
-        echo "Copiando TestAuto.java a client_node/src/pubsubapps/..."
+        echo "copiando TestAutoGrp.java a client_node/src/pubsubapps/..."
         cp "${TESTAUTO_ROOT}" "${TESTAUTO_SRC}"
     else
-        echo "[ERROR] Falta TestAuto.java (buscado en raíz y en client_node/src/pubsubapps/)"
-        echo "Guarda TestAuto.java en la raíz del proyecto o en client_node/src/pubsubapps/."
+        echo "[ERROR] falta TestAutoGrp.java"
+        echo "  buscado en: ${TESTAUTO_SRC}"
+        echo "  buscado en: ${TESTAUTO_ROOT}"
+        echo "  coloca TestAutoGrp.java en la raiz del proyecto o en client_node/src/pubsubapps/"
         exit 1
     fi
 fi
 
-if [ ! -x "${ROOT_DIR}/compile_all.sh" ]; then
-    echo "[ERROR] No encuentro compile_all.sh ejecutable."
-    echo "Ejecuta: chmod +x compile_all.sh"
-    exit 1
-fi
+# comprobamos que todos los scripts del proyecto existen y tienen permiso de ejecucion
+check_exec() {
+    if [ ! -x "$1" ]; then
+        echo "[ERROR] no encuentro $1 ejecutable"
+        echo "  ejecuta: chmod +x $1"
+        exit 1
+    fi
+}
 
-if [ ! -x "${ROOT_DIR}/common/compile.sh" ]; then
-    echo "[ERROR] No encuentro common/compile.sh ejecutable."
-    echo "Ejecuta: chmod +x common/compile.sh"
-    exit 1
-fi
+check_exec "${ROOT_DIR}/compile_all.sh"
+check_exec "${ROOT_DIR}/common/compile.sh"
+check_exec "${ROOT_DIR}/broker_node/compile.sh"
+check_exec "${ROOT_DIR}/client_node/compile.sh"
+check_exec "${ROOT_DIR}/broker_node/start_rmiregistry.sh"
+check_exec "${ROOT_DIR}/broker_node/execute_broker.sh"
+check_exec "${ROOT_DIR}/client_node/execute.sh"
 
-if [ ! -x "${ROOT_DIR}/broker_node/compile.sh" ]; then
-    echo "[ERROR] No encuentro broker_node/compile.sh ejecutable."
-    echo "Ejecuta: chmod +x broker_node/compile.sh"
-    exit 1
-fi
-
-if [ ! -x "${ROOT_DIR}/client_node/compile.sh" ]; then
-    echo "[ERROR] No encuentro client_node/compile.sh ejecutable."
-    echo "Ejecuta: chmod +x client_node/compile.sh"
-    exit 1
-fi
-
-if [ ! -x "${ROOT_DIR}/broker_node/start_rmiregistry.sh" ]; then
-    echo "[ERROR] No encuentro broker_node/start_rmiregistry.sh ejecutable."
-    echo "Ejecuta: chmod +x broker_node/start_rmiregistry.sh"
-    exit 1
-fi
-
-if [ ! -x "${ROOT_DIR}/broker_node/execute_broker.sh" ]; then
-    echo "[ERROR] No encuentro broker_node/execute_broker.sh ejecutable."
-    echo "Ejecuta: chmod +x broker_node/execute_broker.sh"
-    exit 1
-fi
-
-if [ ! -x "${ROOT_DIR}/client_node/execute.sh" ]; then
-    echo "[ERROR] No encuentro client_node/execute.sh ejecutable."
-    echo "Ejecuta: chmod +x client_node/execute.sh"
-    exit 1
-fi
-
-echo "[OK] Ficheros necesarios encontrados"
+echo "[OK] ficheros necesarios encontrados"
 echo
 
-echo "== Compilando proyecto completo =="
+# ---------------------------------------------------------------
+# compilacion del proyecto completo
+# ---------------------------------------------------------------
+echo "== compilando proyecto completo =="
 cd "${ROOT_DIR}" || exit 1
 ./compile_all.sh
 
 if [ $? -ne 0 ]; then
-    echo "[ERROR] La compilación general ha fallado."
+    echo "[ERROR] la compilacion general ha fallado"
     exit 1
 fi
 
-echo "[OK] Compilación general completada"
+echo "[OK] compilacion general completada"
 echo
 
-echo "== Compilando TestAuto.java =="
+# compilamos TestAutoGrp por separado porque no forma parte del compile_all.sh
+echo "== compilando TestAutoGrp.java =="
 cd "${ROOT_DIR}/client_node/src" || exit 1
 
 javac -Xlint -cp .:../common.jar:../bin -d ../bin pubsubapps/TestAutoGrp.java
 
 if [ $? -ne 0 ]; then
-    echo "[ERROR] La compilación de TestAuto.java ha fallado."
+    echo "[ERROR] la compilacion de TestAutoGrp.java ha fallado"
     exit 1
 fi
 
-echo "[OK] TestAuto.java compilado"
+echo "[OK] TestAutoGrp.java compilado"
 echo
 
-echo "== Arrancando RMI Registry =="
+# ---------------------------------------------------------------
+# arranque del registry RMI
+# ---------------------------------------------------------------
+echo "== arrancando RMI registry =="
 cd "${ROOT_DIR}/broker_node" || exit 1
 
 ./start_rmiregistry.sh "${PORT}" > "${TMP_DIR}/rmiregistry.log" 2>&1 &
 REGISTRY_PID=$!
 
-sleep 1
+# esperamos un momento a que el registry levante
+sleep 2
 
 if ! kill -0 "${REGISTRY_PID}" 2>/dev/null; then
-    echo "[ERROR] El rmiregistry no está vivo."
-    echo "--- Log rmiregistry ---"
+    echo "[ERROR] el rmiregistry no esta vivo"
+    echo "--- log rmiregistry ---"
     cat "${TMP_DIR}/rmiregistry.log"
     exit 1
 fi
 
-echo "[OK] RMI Registry arrancado con PID ${REGISTRY_PID}"
+echo "[OK] RMI registry arrancado con PID ${REGISTRY_PID}"
 echo
 
-echo "== Arrancando broker =="
+# ---------------------------------------------------------------
+# arranque del broker
+# ---------------------------------------------------------------
+echo "== arrancando broker =="
 cd "${ROOT_DIR}/broker_node" || exit 1
 
 ./execute_broker.sh "${PORT}" > "${TMP_DIR}/broker.log" 2>&1 &
 BROKER_PID=$!
 
-sleep 2
+# el broker necesita un poco mas de tiempo para registrarse en el registry
+sleep 3
 
 if ! kill -0 "${BROKER_PID}" 2>/dev/null; then
-    echo "[ERROR] El broker no está vivo."
-    echo "--- Log broker ---"
+    echo "[ERROR] el broker no esta vivo"
+    echo "--- log broker ---"
     cat "${TMP_DIR}/broker.log"
     exit 1
 fi
 
-echo "[OK] Broker arrancado con PID ${BROKER_PID}"
+echo "[OK] broker arrancado con PID ${BROKER_PID}"
 echo
 
-echo "== Ejecutando TestAuto =="
+# ---------------------------------------------------------------
+# ejecucion del test automatico
+# ---------------------------------------------------------------
+echo "== ejecutando TestAutoGrp =="
 echo
 
 cd "${ROOT_DIR}/client_node" || exit 1
 
+# pasamos host y puerto al test java
 ./execute.sh TestAutoGrp localhost "${PORT}"
 TEST_RESULT=$?
 
+# mostramos el log del broker por si hay excepciones en el servidor
 echo
-echo "== Logs del broker =="
+echo "== logs del broker =="
 cat "${TMP_DIR}/broker.log"
 
 echo
 if [ "${TEST_RESULT}" -eq 0 ]; then
-    echo "[OK] Todos los tests automáticos han pasado."
+    echo "[OK] todos los tests automaticos han pasado"
 else
-    echo "[FAIL] Algún test automático ha fallado."
+    echo "[FAIL] algun test automatico ha fallado (codigo de salida: ${TEST_RESULT})"
 fi
 
 exit "${TEST_RESULT}"
